@@ -225,10 +225,20 @@ def main() -> None:
     language_codes = {label: code for label, code in language_options}
     addable_genres = [genre for genre in genre_options if genre != "Any"]
 
-    with st.form("movie_filters"):
+    genre_col, add_genre_col = st.columns([4, 1.3])
+    with genre_col:
         genre = st.selectbox("Genre", genre_options, index=0)
-        extra_genres = []
-        for index in range(st.session_state.extra_genre_count):
+    with add_genre_col:
+        st.write("")
+        st.write("")
+        if st.button("+ Add Genre", use_container_width=True):
+            st.session_state.extra_genre_count += 1
+            st.rerun()
+
+    extra_genres = []
+    for index in range(st.session_state.extra_genre_count):
+        extra_genre_col, remove_genre_col = st.columns([4, 1.3])
+        with extra_genre_col:
             extra_genres.append(
                 st.selectbox(
                     f"Extra Genre {index + 1}",
@@ -236,23 +246,30 @@ def main() -> None:
                     key=f"extra_genre_{index}",
                 )
             )
-        actor = st.text_input("Actor", placeholder="Leave blank for any actor")
-        year_mode = st.selectbox("Year Filter", ["Any", "Exactly", "Or Newer", "Or Older"], index=0)
-        year = ""
-        if year_mode != "Any":
-            year = st.text_input("Year", placeholder="Example: 2020")
-        language_label_value = st.selectbox("Language", [label for label, _ in language_options], index=0)
-        submitted = st.form_submit_button("Get Recommendations", use_container_width=True)
+        with remove_genre_col:
+            st.write("")
+            st.write("")
+            if st.button("Remove", key=f"remove_extra_genre_{index}", use_container_width=True):
+                for shift_index in range(index, st.session_state.extra_genre_count - 1):
+                    next_key = f"extra_genre_{shift_index + 1}"
+                    current_key = f"extra_genre_{shift_index}"
+                    if next_key in st.session_state:
+                        st.session_state[current_key] = st.session_state[next_key]
+                last_key = f"extra_genre_{st.session_state.extra_genre_count - 1}"
+                if last_key in st.session_state:
+                    del st.session_state[last_key]
+                st.session_state.extra_genre_count -= 1
+                st.rerun()
 
-    add_genre_col, clear_genre_col = st.columns(2)
-    with add_genre_col:
-        if st.button("+ Add Genre", use_container_width=True):
-            st.session_state.extra_genre_count += 1
-            st.rerun()
-    with clear_genre_col:
-        if st.button("Remove Extra Genre", disabled=st.session_state.extra_genre_count == 0, use_container_width=True):
-            st.session_state.extra_genre_count -= 1
-            st.rerun()
+    actor = st.text_input("Actor", placeholder="Leave blank for any actor")
+    year_mode = st.selectbox("Year Filter", ["Any", "Exactly", "Or Newer", "Or Older"], index=0)
+    year = st.text_input(
+        "Year",
+        placeholder="Example: 2020",
+        disabled=year_mode == "Any",
+    )
+    language_label_value = st.selectbox("Language", [label for label, _ in language_options], index=0)
+    submitted = st.button("Get Recommendations", use_container_width=True)
 
     filters = {
         "genre": genre,
