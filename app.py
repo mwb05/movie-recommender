@@ -1,4 +1,5 @@
 import os
+import sqlite3
 
 import requests
 import streamlit as st
@@ -6,6 +7,7 @@ import streamlit as st
 
 BASE_URL = "https://api.themoviedb.org/3"
 POSTER_BASE_URL = "https://image.tmdb.org/t/p/w500"
+DATABASE_PATH = "movies.db"
 
 
 def get_api_key() -> str | None:
@@ -24,6 +26,201 @@ def tmdb_get(endpoint: str, params: dict | None = None) -> dict:
     response = requests.get(f"{BASE_URL}{endpoint}", params=query, timeout=20)
     response.raise_for_status()
     return response.json()
+
+
+def get_db_connection() -> sqlite3.Connection:
+    return sqlite3.connect(DATABASE_PATH)
+
+
+def init_db() -> None:
+    with get_db_connection() as conn:
+        table_exists = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'saved_movies'"
+        ).fetchone()
+
+        if not table_exists:
+            conn.execute(
+                """
+                CREATE TABLE saved_movies (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT NOT NULL,
+                    tmdb_id INTEGER NOT NULL,
+                    title TEXT NOT NULL,
+                    genres TEXT,
+                    release_date TEXT,
+                    runtime INTEGER,
+                    streaming_services TEXT,
+                    language TEXT,
+                    user_rating REAL,
+                    notes TEXT,
+                    UNIQUE(username, tmdb_id)
+                )
+                """
+            )
+            conn.commit()
+            return
+
+        existing_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(saved_movies)").fetchall()
+        }
+        unique_index_sql = " ".join(
+            row[4] or ""
+            for row in conn.execute(
+                "SELECT * FROM sqlite_master WHERE type = 'index' AND tbl_name = 'saved_movies'"
+            ).fetchall()
+        )
+        needs_migration = "username" not in existing_columns or "username, tmdb_id" not in unique_index_sql
+
+        if needs_migration:
+            conn.execute("ALTER TABLE saved_movies RENAME TO saved_movies_old")
+            conn.execute(
+                """
+                CREATE TABLE saved_movies (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT NOT NULL,
+                    tmdb_id INTEGER NOT NULL,
+                    title TEXT NOT NULL,
+                    genres TEXT,
+                    release_date TEXT,
+                    runtime INTEGER,
+                    streaming_services TEXT,
+                    language TEXT,
+                    user_rating REAL,
+                    notes TEXT,
+                    UNIQUE(username, tmdb_id)
+                )
+                """
+            )
+            if "username" in existing_columns:
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO saved_movies (
+                        username, tmdb_id, title, genres, release_date, runtime,
+                        streaming_services, language, user_rating, notes
+                    )
+                    SELECT
+                        COALESCE(username, 'guest'),
+                        tmdb_id,
+                        title,
+                        genres,
+                        release_date,
+                        runtime,
+                        streaming_services,
+                        language,
+                        user_rating,
+                        notes
+                    FROM saved_movies_old
+                    """
+                )
+            else:
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO saved_movies (
+                        username, tmdb_id, title, genres, release_date, runtime,
+                        streaming_services, language, user_rating, notes
+                    )
+                    SELECT
+                        'guest',
+                        tmdb_id,
+                        title,
+                        genres,
+                        release_date,
+                        runtime,
+                        streaming_services,
+                        language,
+                        user_rating,
+                        notes
+                    FROM saved_movies_old
+                    """
+                )
+            conn.execute("DROP TABLE saved_movies_old")
+        conn.commit()
+
+
+def fetch_saved_movies(username: str) -> list[dict]:
+    with get_db_connection() as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT id, tmdb_id, title, genres, release_date, runtime,
+                   streaming_services, language, user_rating, notes
+            FROM saved_movies
+            WHERE username = ?
+            ORDER BY title COLLATE NOCASE
+            """,
+            (username,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def fetch_saved_movie(username: str, tmdb_id: int) -> dict | None:
+    with get_db_connection() as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            """
+            SELECT id, tmdb_id, title, genres, release_date, runtime,
+                   streaming_services, language, user_rating, notes
+            FROM saved_movies
+            WHERE username = ? AND tmdb_id = ?
+            """,
+            (username, tmdb_id),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def save_movie_record(
+    username: str,
+    tmdb_id: int,
+    title: str,
+    genres: list[str],
+    release_date: str,
+    runtime: int | None,
+    streaming_services: list[str],
+    language: str,
+) -> None:
+    with get_db_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO saved_movies (
+                username, tmdb_id, title, genres, release_date, runtime,
+                streaming_services, language
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                username,
+                tmdb_id,
+                title,
+                ", ".join(genres),
+                release_date,
+                runtime,
+                ", ".join(streaming_services),
+                language,
+            ),
+        )
+        conn.commit()
+
+
+def update_saved_movie(username: str, tmdb_id: int, user_rating: float | None, notes: str) -> None:
+    with get_db_connection() as conn:
+        conn.execute(
+            """
+            UPDATE saved_movies
+            SET user_rating = ?, notes = ?
+            WHERE username = ? AND tmdb_id = ?
+            """,
+            (user_rating, notes.strip() or None, username, tmdb_id),
+        )
+        conn.commit()
+
+
+def delete_saved_movie(username: str, tmdb_id: int) -> None:
+    with get_db_connection() as conn:
+        conn.execute(
+            "DELETE FROM saved_movies WHERE username = ? AND tmdb_id = ?",
+            (username, tmdb_id),
+        )
+        conn.commit()
 
 
 @st.cache_data(show_spinner=False)
@@ -259,6 +456,7 @@ def ensure_state() -> None:
         "search_error": "",
         "filters": None,
         "extra_genres_list": [],
+        "username": "",
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -267,6 +465,7 @@ def ensure_state() -> None:
 
 def main() -> None:
     st.set_page_config(page_title="Movie Recommender", page_icon="🎬", layout="centered")
+    init_db()
     ensure_state()
 
     st.markdown(
@@ -351,6 +550,12 @@ def main() -> None:
     certification_options = load_us_certifications()
     provider_map = load_watch_providers()
     provider_options = list(provider_map.keys())
+    username = st.text_input(
+        "Username",
+        value=st.session_state.username,
+        placeholder="Enter a username to save your movies",
+    ).strip()
+    st.session_state.username = username
 
     st.markdown('<div class="filters-card">', unsafe_allow_html=True)
     st.markdown('<div class="section-label">Filters</div>', unsafe_allow_html=True)
@@ -470,6 +675,8 @@ def main() -> None:
             provider_names = [provider["provider_name"] for provider in flatrate_providers]
             buy_provider_names = [provider["provider_name"] for provider in buy_providers]
             rent_provider_names = [provider["provider_name"] for provider in rent_providers]
+            active_username = st.session_state.username
+            saved_movie = fetch_saved_movie(active_username, movie_id) if active_username else None
 
             st.markdown("### Movie Details")
             poster_path = details.get("poster_path")
@@ -488,12 +695,79 @@ def main() -> None:
             with poster_col:
                 if poster_path:
                     st.image(f"{POSTER_BASE_URL}{poster_path}", use_container_width=True)
+
+            if not active_username:
+                st.info("Enter a username above to save and manage movies in your personal database.")
+            elif saved_movie is None:
+                if st.button("Save to Database", use_container_width=True):
+                    save_movie_record(
+                        username=active_username,
+                        tmdb_id=movie_id,
+                        title=details["title"],
+                        genres=genres,
+                        release_date=details.get("release_date") or "",
+                        runtime=details.get("runtime"),
+                        streaming_services=provider_names,
+                        language=details.get("original_language", "").upper() or "N/A",
+                    )
+                    st.success(f"{details['title']} was added to your saved movies database.")
+                    st.rerun()
+            else:
+                st.success("This movie is already saved in your database.")
+
+                default_rating = float(saved_movie["user_rating"]) if saved_movie["user_rating"] is not None else 0.0
+                rating_value = st.number_input(
+                    "Your Rating",
+                    min_value=0.0,
+                    max_value=10.0,
+                    value=default_rating,
+                    step=0.5,
+                    key=f"rating_{movie_id}",
+                )
+                notes_value = st.text_area(
+                    "Notes",
+                    value=saved_movie["notes"] or "",
+                    placeholder="Why did you save this one?",
+                    key=f"notes_{movie_id}",
+                )
+                update_col, delete_col = st.columns(2)
+                with update_col:
+                    if st.button("Update Saved Movie", use_container_width=True):
+                        normalized_rating = rating_value if rating_value > 0 else None
+                        update_saved_movie(active_username, movie_id, normalized_rating, notes_value)
+                        st.success("Saved movie updated.")
+                        st.rerun()
+                with delete_col:
+                    if st.button("Delete Saved Movie", use_container_width=True):
+                        delete_saved_movie(active_username, movie_id)
+                        st.success("Saved movie deleted.")
+                        st.rerun()
         except Exception as error:
             st.error(str(error))
 
         if st.button("Back to Recommendations", use_container_width=True):
             st.session_state.selected_movie_id = None
             st.rerun()
+
+    st.markdown("### Saved Movies Database")
+    if username:
+        saved_movies = fetch_saved_movies(username)
+        if saved_movies:
+            for movie in saved_movies:
+                st.markdown(
+                    f"""
+                    **{movie['title']}**  
+                    Release Date: {movie['release_date'] or 'N/A'}  
+                    Genres: {movie['genres'] or 'N/A'}  
+                    Streaming: {movie['streaming_services'] or 'Not listed'}  
+                    Your Rating: {movie['user_rating'] if movie['user_rating'] is not None else 'Not rated'}  
+                    Notes: {movie['notes'] or 'No notes yet'}
+                    """
+                )
+        else:
+            st.info("No saved movies yet for this username. Open a recommendation and click 'Save to Database' to create your first record.")
+    else:
+        st.info("Enter a username to view and manage your saved movies.")
 
     if current_filters:
         st.markdown("### Selected Filters")
@@ -514,7 +788,10 @@ def main() -> None:
         st.write(f"Language: {language_label(language_options, current_filters['language'])}")
         st.write(f"Page: {max(st.session_state.current_page, 1)} of {max(st.session_state.total_pages, 1)}")
 
-    st.caption("Powered by TMDb. Streaming provider data is supplied via TMDb/JustWatch. Narrow filters can produce only one result page.")
+    st.caption(
+        "Powered by TMDb. Streaming provider data is supplied via TMDb/JustWatch. "
+        "Saved movies are stored locally in SQLite for CRUD operations."
+    )
 
 
 if __name__ == "__main__":
