@@ -454,25 +454,6 @@ def main() -> None:
                 st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
 
-    if current_filters:
-        st.markdown("### Selected Filters")
-        genre_parts = [current_filters["genre"]] if current_filters["genre"] != "Any" else []
-        genre_parts.extend(current_filters["extra_genres"])
-        st.write(f"Genre: {', '.join(genre_parts) if genre_parts else 'Any'}")
-        st.write(f"Actor: {current_filters['actor'].strip() or 'Any'}")
-        st.write(f"Allowed Ratings: {', '.join(current_filters['certifications']) if current_filters['certifications'] else 'Any'}")
-        selected_provider_labels = [
-            provider_name for provider_name, provider_id in provider_map.items()
-            if provider_id in current_filters["providers"]
-        ]
-        st.write(f"Streaming Services: {', '.join(selected_provider_labels) if selected_provider_labels else 'Any'}")
-        if current_filters["year"].strip():
-            st.write(f"Release Year: {current_filters['year'].strip()} {current_filters['year_mode']}")
-        else:
-            st.write("Release Year: Any")
-        st.write(f"Language: {language_label(language_options, current_filters['language'])}")
-        st.write(f"Page: {max(st.session_state.current_page, 1)} of {max(st.session_state.total_pages, 1)}")
-
     if st.session_state.selected_movie_id is not None:
         movie_id = st.session_state.selected_movie_id
         try:
@@ -513,6 +494,25 @@ def main() -> None:
         if st.button("Back to Recommendations", use_container_width=True):
             st.session_state.selected_movie_id = None
             st.rerun()
+
+    if current_filters:
+        st.markdown("### Selected Filters")
+        genre_parts = [current_filters["genre"]] if current_filters["genre"] != "Any" else []
+        genre_parts.extend(current_filters["extra_genres"])
+        st.write(f"Genre: {', '.join(genre_parts) if genre_parts else 'Any'}")
+        st.write(f"Actor: {current_filters['actor'].strip() or 'Any'}")
+        st.write(f"Allowed Ratings: {', '.join(current_filters['certifications']) if current_filters['certifications'] else 'Any'}")
+        selected_provider_labels = [
+            provider_name for provider_name, provider_id in provider_map.items()
+            if provider_id in current_filters["providers"]
+        ]
+        st.write(f"Streaming Services: {', '.join(selected_provider_labels) if selected_provider_labels else 'Any'}")
+        if current_filters["year"].strip():
+            st.write(f"Release Year: {current_filters['year'].strip()} {current_filters['year_mode']}")
+        else:
+            st.write("Release Year: Any")
+        st.write(f"Language: {language_label(language_options, current_filters['language'])}")
+        st.write(f"Page: {max(st.session_state.current_page, 1)} of {max(st.session_state.total_pages, 1)}")
 
     st.caption("Powered by TMDb. Streaming provider data is supplied via TMDb/JustWatch. Narrow filters can produce only one result page.")
 
