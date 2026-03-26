@@ -53,6 +53,10 @@ def load_languages() -> list[tuple[str, str]]:
     ]
 
 
+def load_us_certifications() -> list[str]:
+    return ["G", "PG", "PG-13", "R", "NC-17"]
+
+
 @st.cache_data(show_spinner=False)
 def find_actor_id(actor_name: str) -> int | None:
     actor_name = actor_name.strip()
@@ -70,6 +74,7 @@ def build_discover_params(
     genre_value: str,
     extra_genres: list[str],
     actor_value: str,
+    certifications: list[str],
     year_mode: str,
     year_value: str,
     language_value: str,
@@ -103,6 +108,10 @@ def build_discover_params(
             raise ValueError(f"No actor found for '{actor_value}'. Try a different spelling.")
         params["with_cast"] = actor_id
 
+    if certifications:
+        params["certification_country"] = "US"
+        params["certification"] = "|".join(certifications)
+
     year_value = year_value.strip()
     if year_value:
         if not year_value.isdigit() or len(year_value) != 4:
@@ -128,6 +137,7 @@ def fetch_recommendation_page(filters: dict, genre_map: dict[str, str], page_num
             filters["genre"],
             filters["extra_genres"],
             filters["actor"],
+            filters["certifications"],
             filters["year_mode"],
             filters["year"],
             filters["language"],
@@ -293,6 +303,7 @@ def main() -> None:
     language_options = load_languages()
     language_codes = {label: code for label, code in language_options}
     addable_genres = [genre for genre in genre_options if genre != "Any"]
+    certification_options = load_us_certifications()
 
     st.markdown('<div class="filters-card">', unsafe_allow_html=True)
     st.markdown('<div class="section-label">Filters</div>', unsafe_allow_html=True)
@@ -328,6 +339,13 @@ def main() -> None:
     st.session_state.extra_genres_list = list(extra_genres)
 
     actor = st.text_input("Actor", placeholder="Leave blank for any actor")
+    st.markdown('<div class="section-label">Allowed Ratings</div>', unsafe_allow_html=True)
+    cert_columns = st.columns(len(certification_options))
+    selected_certifications = []
+    for cert, column in zip(certification_options, cert_columns):
+        with column:
+            if st.checkbox(cert, key=f"cert_{cert}"):
+                selected_certifications.append(cert)
     year_filter_col, year_value_col = st.columns(2)
     with year_filter_col:
         year_mode = st.selectbox("Year Filter", ["Any", "Exactly", "Or Newer", "Or Older"], index=0)
@@ -346,6 +364,7 @@ def main() -> None:
         "genre": genre,
         "extra_genres": extra_genres,
         "actor": actor,
+        "certifications": selected_certifications,
         "year_mode": year_mode,
         "year": year,
         "language": language_codes[language_label_value],
@@ -369,6 +388,7 @@ def main() -> None:
         genre_parts.extend(current_filters["extra_genres"])
         st.write(f"Genre: {', '.join(genre_parts) if genre_parts else 'Any'}")
         st.write(f"Actor: {current_filters['actor'].strip() or 'Any'}")
+        st.write(f"Allowed Ratings: {', '.join(current_filters['certifications']) if current_filters['certifications'] else 'Any'}")
         if current_filters["year"].strip():
             st.write(f"Release Year: {current_filters['year'].strip()} {current_filters['year_mode']}")
         else:
