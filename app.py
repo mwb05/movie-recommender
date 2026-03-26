@@ -68,9 +68,9 @@ def load_watch_providers() -> dict[str, str]:
         "Hulu": ["Hulu"],
         "Max": ["Max", "HBO Max"],
         "Peacock": ["Peacock Premium", "Peacock"],
-        "Paramount+": ["Paramount Plus", "Paramount+"],
+        "Paramount+": ["Paramount Plus", "Paramount+", "Paramount Plus Apple TV Channel"],
         "Prime Video": ["Amazon Prime Video", "Prime Video"],
-        "Apple TV": ["Apple TV Plus", "Apple TV+"],
+        "Apple TV": ["Apple TV Plus", "Apple TV+", "Apple TV", "Apple TV Plus Amazon Channel"],
     }
     resolved_map: dict[str, str] = {}
     for app_label, candidates in alias_map.items():
