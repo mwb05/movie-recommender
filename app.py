@@ -68,7 +68,15 @@ def load_watch_providers() -> dict[str, str]:
         "Hulu": ["Hulu"],
         "Max": ["Max", "HBO Max"],
         "Peacock": ["Peacock Premium", "Peacock"],
-        "Paramount+": ["Paramount Plus", "Paramount+", "Paramount Plus Apple TV Channel"],
+        "Paramount+": [
+            "Paramount Plus",
+            "Paramount+",
+            "Paramount Plus Apple TV Channel",
+            "Paramount Plus Premium",
+            "Paramount+ Amazon Channel",
+            "Paramount+ Roku Premium Channel",
+            "Paramount+ with Showtime",
+        ],
         "Prime Video": ["Amazon Prime Video", "Prime Video"],
         "Apple TV": ["Apple TV Plus", "Apple TV+", "Apple TV", "Apple TV Plus Amazon Channel"],
     }
