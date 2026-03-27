@@ -11,15 +11,22 @@ BASE_URL = "https://api.themoviedb.org/3"
 POSTER_BASE_URL = "https://image.tmdb.org/t/p/w500"
 
 
+def get_secret_value(name: str) -> str | None:
+    try:
+        return st.secrets.get(name) or os.getenv(name)
+    except Exception:
+        return os.getenv(name)
+
+
 def get_api_key() -> str | None:
-    return st.secrets.get("TMDB_API_KEY") or os.getenv("TMDB_API_KEY")
+    return get_secret_value("TMDB_API_KEY")
 
 
 TMDB_API_KEY = get_api_key()
 
 
 def get_database_url() -> str | None:
-    return st.secrets.get("DATABASE_URL") or os.getenv("DATABASE_URL")
+    return get_secret_value("DATABASE_URL")
 
 
 DATABASE_URL = get_database_url()
