@@ -248,7 +248,7 @@ def save_movie_record(
 def build_user_preference_profile(username: str, genre_map: dict[str, str]) -> dict:
     saved_movies = fetch_saved_movies(username)
     rated_movies = [movie for movie in saved_movies if movie.get("user_rating") is not None]
-    favorite_movies = [movie for movie in rated_movies if movie["user_rating"] >= 7]
+    favorite_movies = [movie for movie in rated_movies if movie["user_rating"] >= 4]
     source_movies = favorite_movies or rated_movies
 
     if not source_movies:
@@ -946,7 +946,7 @@ def main() -> None:
                 initial_rating = st.number_input(
                     "Your Rating",
                     min_value=0.0,
-                    max_value=10.0,
+                    max_value=5.0,
                     value=0.0,
                     step=0.5,
                     key=f"new_rating_{movie_id}",
@@ -980,7 +980,7 @@ def main() -> None:
                 rating_value = st.number_input(
                     "Your Rating",
                     min_value=0.0,
-                    max_value=10.0,
+                    max_value=5.0,
                     value=default_rating,
                     step=0.5,
                     key=f"rating_{movie_id}",
