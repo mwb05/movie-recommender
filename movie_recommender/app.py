@@ -1150,14 +1150,6 @@ def main() -> None:
     else:
         st.info("Log in to view and manage your saved movies.")
 
-    with st.expander("View Database Tables"):
-        st.write("Users Table")
-        st.dataframe(fetch_all_users(), use_container_width=True)
-        st.write("Movies Table")
-        st.dataframe(fetch_all_movies(), use_container_width=True)
-        st.write("User-Movies Junction Table")
-        st.dataframe(fetch_user_movie_links(), use_container_width=True)
-
     if current_filters:
         st.markdown("### Selected Filters")
         genre_parts = [current_filters["genre"]] if current_filters["genre"] != "Any" else []
