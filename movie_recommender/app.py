@@ -82,11 +82,18 @@ def init_db() -> None:
                     id SERIAL PRIMARY KEY,
                     user_id INTEGER NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
                     movie_id INTEGER NOT NULL REFERENCES movies(id) ON DELETE CASCADE,
+                    preference TEXT NOT NULL DEFAULT 'liked',
                     user_rating NUMERIC(2,1),
                     notes TEXT,
                     saved_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     UNIQUE(user_id, movie_id)
                 )
+                """
+            )
+            cur.execute(
+                """
+                ALTER TABLE user_movies
+                ADD COLUMN IF NOT EXISTS preference TEXT NOT NULL DEFAULT 'liked'
                 """
             )
 
@@ -201,6 +208,7 @@ def fetch_saved_movies(username: str) -> list[dict]:
                     m.runtime,
                     m.streaming_services,
                     m.language,
+                    um.preference,
                     um.user_rating,
                     um.notes
                 FROM user_movies um
@@ -228,6 +236,7 @@ def fetch_saved_movie(username: str, tmdb_id: int) -> dict | None:
                     m.runtime,
                     m.streaming_services,
                     m.language,
+                    um.preference,
                     um.user_rating,
                     um.notes
                 FROM user_movies um
@@ -296,6 +305,7 @@ def save_movie_record(
     runtime: int | None,
     streaming_services: list[str],
     language: str,
+    preference: str = "liked",
     user_rating: float | None = None,
     notes: str = "",
 ) -> None:
@@ -330,31 +340,47 @@ def save_movie_record(
             movie_id = cur.fetchone()["id"]
             cur.execute(
                 """
-                INSERT INTO user_movies (user_id, movie_id, user_rating, notes)
-                SELECT id, %s, %s, %s
+                INSERT INTO user_movies (user_id, movie_id, preference, user_rating, notes)
+                SELECT id, %s, %s, %s, %s
                 FROM app_users
                 WHERE username = %s
                 ON CONFLICT (user_id, movie_id) DO UPDATE
-                SET user_rating = EXCLUDED.user_rating,
+                SET preference = EXCLUDED.preference,
+                    user_rating = EXCLUDED.user_rating,
                     notes = EXCLUDED.notes
                 """,
-                (movie_id, user_rating, notes.strip() or None, username),
+                (movie_id, preference, user_rating, notes.strip() or None, username),
             )
         conn.commit()
 
 
 def build_user_preference_profile(username: str, genre_map: dict[str, str]) -> dict:
     saved_movies = fetch_saved_movies(username)
-    rated_movies = [movie for movie in saved_movies if movie.get("user_rating") is not None]
+    saved_tmdb_ids = {movie["tmdb_id"] for movie in saved_movies}
+    disliked_movies = [movie for movie in saved_movies if movie.get("preference") == "disliked"]
+    liked_movies = [movie for movie in saved_movies if movie.get("preference") != "disliked"]
+    rated_movies = [movie for movie in liked_movies if movie.get("user_rating") is not None]
     favorite_movies = [movie for movie in rated_movies if movie["user_rating"] >= 4]
     source_movies = favorite_movies or rated_movies
 
-    if not source_movies:
+    disliked_genre_counts: Counter[str] = Counter()
+    disliked_language_counts: Counter[str] = Counter()
+    for movie in disliked_movies:
+        for genre_name in [item.strip() for item in (movie.get("genres") or "").split(",") if item.strip()]:
+            disliked_genre_counts[genre_name] += 1
+        language_value = (movie.get("language") or "").strip().lower()
+        if language_value:
+            disliked_language_counts[language_value] += 1
+
+    if not source_movies and not disliked_movies:
         return {
             "favorite_count": 0,
             "top_genres": [],
             "preferred_genre_ids": set(),
+            "saved_tmdb_ids": set(),
+            "disliked_genre_ids": set(),
             "top_languages": [],
+            "disliked_languages": [],
             "top_streaming_services": [],
         }
 
@@ -377,41 +403,59 @@ def build_user_preference_profile(username: str, genre_map: dict[str, str]) -> d
         for genre in top_genres
         if genre in genre_map and genre_map[genre].split(",")[0].isdigit()
     }
+    disliked_genre_ids = {
+        int(genre_map[genre].split(",")[0])
+        for genre, _ in disliked_genre_counts.most_common(3)
+        if genre in genre_map and genre_map[genre].split(",")[0].isdigit()
+    }
 
     return {
         "favorite_count": len(source_movies),
         "top_genres": top_genres,
         "preferred_genre_ids": preferred_genre_ids,
+        "saved_tmdb_ids": saved_tmdb_ids,
+        "disliked_genre_ids": disliked_genre_ids,
         "top_languages": [language for language, _ in language_counts.most_common(2)],
+        "disliked_languages": [language for language, _ in disliked_language_counts.most_common(2)],
         "top_streaming_services": [provider for provider, _ in provider_counts.most_common(2)],
     }
 
 
 def personalize_results(results: list[dict], filters: dict, profile: dict) -> list[dict]:
-    if not results or not profile["favorite_count"]:
+    if not results:
         return results
+
+    filtered_results = [
+        movie for movie in results if movie.get("id") not in profile.get("saved_tmdb_ids", set())
+    ]
+    if not filtered_results:
+        return []
 
     def score(movie: dict) -> tuple[int, float]:
         points = 0
         genre_ids = set(movie.get("genre_ids", []))
         if profile["preferred_genre_ids"] and genre_ids & profile["preferred_genre_ids"]:
             points += 3
+        if profile.get("disliked_genre_ids") and genre_ids & profile["disliked_genre_ids"]:
+            points -= 4
         if profile["top_languages"]:
             movie_language = (movie.get("original_language") or "").strip().lower()
             if movie_language in profile["top_languages"]:
                 points += 2
+            if movie_language in profile.get("disliked_languages", []):
+                points -= 3
         return (points, movie.get("vote_average", 0.0))
 
-    return sorted(results, key=score, reverse=True)
+    return sorted(filtered_results, key=score, reverse=True)
 
 
-def update_saved_movie(username: str, tmdb_id: int, user_rating: float | None, notes: str) -> None:
+def update_saved_movie(username: str, tmdb_id: int, preference: str, user_rating: float | None, notes: str) -> None:
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
                 UPDATE user_movies um
-                SET user_rating = %s, notes = %s
+                SET preference = %s, user_rating = %s, notes = %s
                 WHERE um.user_id = (
                     SELECT id FROM app_users WHERE username = %s
                 )
@@ -419,7 +463,7 @@ def update_saved_movie(username: str, tmdb_id: int, user_rating: float | None, n
                     SELECT id FROM movies WHERE tmdb_id = %s
                 )
                 """,
-                (user_rating, notes.strip() or None, username, tmdb_id),
+                (preference, user_rating, notes.strip() or None, username, tmdb_id),
             )
         conn.commit()
 
@@ -556,6 +600,7 @@ def build_discover_params(
     language_value: str,
     genre_map: dict[str, str],
     page_number: int,
+    profile: dict | None = None,
 ) -> dict:
     params = {
         "sort_by": "vote_average.desc",
@@ -576,6 +621,10 @@ def build_discover_params(
             if genre_id not in unique_ids:
                 unique_ids.append(genre_id)
         params["with_genres"] = ",".join(unique_ids)
+    elif profile and profile.get("preferred_genre_ids"):
+        preferred_genres = sorted(profile["preferred_genre_ids"])
+        params["with_genres"] = "|".join(str(genre_id) for genre_id in preferred_genres)
+        params["sort_by"] = "popularity.desc"
 
     actor_value = actor_value.strip()
     if actor_value:
@@ -608,6 +657,8 @@ def build_discover_params(
 
     if language_value != "Any":
         params["with_original_language"] = language_value
+    elif profile and profile.get("top_languages"):
+        params["with_original_language"] = profile["top_languages"][0]
 
     return params
 
@@ -631,6 +682,7 @@ def fetch_recommendation_page(
             filters["language"],
             genre_map,
             page_number,
+            profile,
         ),
     )
     results = data.get("results", [])
@@ -877,7 +929,7 @@ def main() -> None:
             st.write(f"Based on {user_profile['favorite_count']} rated saved movie(s), you seem to like: **{liked_genres}**.")
             st.write(f"Preferred languages: {liked_languages}")
             st.write(f"Common streaming picks: {liked_services}")
-            st.caption("Recommendation batches are filtered by your search choices first, then sorted using your saved ratings and preferences.")
+            st.caption("With no genre or language filters, the app now uses your saved taste to shape the recommendation query itself, then sorts the results using your ratings and preferences.")
         else:
             st.info("Rate a few saved movies and the app will start tailoring recommendation order to your taste.")
 
@@ -1063,6 +1115,12 @@ def main() -> None:
             if not active_username:
                 st.info("Enter a username above to save and manage movies in your personal database.")
             elif saved_movie is None:
+                initial_preference = st.selectbox(
+                    "How do you feel about this movie?",
+                    ["Liked", "Disliked"],
+                    index=0,
+                    key=f"new_preference_{movie_id}",
+                )
                 initial_rating = st.number_input(
                     "Your Rating",
                     min_value=0.0,
@@ -1088,6 +1146,7 @@ def main() -> None:
                         runtime=details.get("runtime"),
                         streaming_services=provider_names,
                         language=details.get("original_language", "").upper() or "N/A",
+                        preference=initial_preference.lower(),
                         user_rating=normalized_rating,
                         notes=initial_notes,
                     )
@@ -1096,6 +1155,14 @@ def main() -> None:
             else:
                 st.success("This movie is already saved in your database.")
 
+                preference_options = ["Liked", "Disliked"]
+                saved_preference = "Disliked" if saved_movie.get("preference") == "disliked" else "Liked"
+                preference_value = st.selectbox(
+                    "How do you feel about this movie?",
+                    preference_options,
+                    index=preference_options.index(saved_preference),
+                    key=f"preference_{movie_id}",
+                )
                 default_rating = float(saved_movie["user_rating"]) if saved_movie["user_rating"] is not None else 0.0
                 rating_value = st.number_input(
                     "Your Rating",
@@ -1115,7 +1182,13 @@ def main() -> None:
                 with update_col:
                     if st.button("Update Saved Movie", use_container_width=True):
                         normalized_rating = rating_value if rating_value > 0 else None
-                        update_saved_movie(active_username, movie_id, normalized_rating, notes_value)
+                        update_saved_movie(
+                            active_username,
+                            movie_id,
+                            preference_value.lower(),
+                            normalized_rating,
+                            notes_value,
+                        )
                         st.success("Saved movie updated. Future recommendations will use your latest rating.")
                         st.rerun()
                 with delete_col:
@@ -1141,6 +1214,7 @@ def main() -> None:
                     Release Date: {movie['release_date'] or 'N/A'}  
                     Genres: {movie['genres'] or 'N/A'}  
                     Streaming: {movie['streaming_services'] or 'Not listed'}  
+                    Preference: {movie['preference'].title() if movie.get('preference') else 'Liked'}  
                     Your Rating: {movie['user_rating'] if movie['user_rating'] is not None else 'Not rated'}  
                     Notes: {movie['notes'] or 'No notes yet'}
                     """
