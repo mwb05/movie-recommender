@@ -421,6 +421,22 @@ def build_user_preference_profile(username: str, genre_map: dict[str, str]) -> d
     }
 
 
+def recommendation_reason(movie: dict, profile: dict, genre_lookup: dict[int, str]) -> str:
+    reasons = []
+    movie_genres = [genre_lookup[genre_id] for genre_id in movie.get("genre_ids", []) if genre_id in genre_lookup]
+    matched_genres = [genre for genre in movie_genres if genre in profile.get("top_genres", [])]
+    if matched_genres:
+        reasons.append(f"matches your taste for {', '.join(matched_genres[:2])}")
+
+    movie_language = (movie.get("original_language") or "").strip().lower()
+    if movie_language and movie_language in profile.get("top_languages", []):
+        reasons.append(f"fits your preferred language ({movie_language.upper()})")
+
+    if not reasons:
+        return "Recommended from your saved ratings and filters."
+    return "Because it " + " and ".join(reasons) + "."
+
+
 def personalize_results(results: list[dict], filters: dict, profile: dict) -> list[dict]:
     if not results:
         return results
@@ -466,6 +482,27 @@ def update_saved_movie(username: str, tmdb_id: int, preference: str, user_rating
                 (preference, user_rating, notes.strip() or None, username, tmdb_id),
             )
         conn.commit()
+
+
+def save_not_interested_movie(
+    username: str,
+    movie: dict,
+    genres: list[str],
+    streaming_services: list[str],
+) -> None:
+    save_movie_record(
+        username=username,
+        tmdb_id=movie["id"],
+        title=movie["title"],
+        genres=genres,
+        release_date=movie.get("release_date") or "",
+        runtime=None,
+        streaming_services=streaming_services,
+        language=(movie.get("original_language") or "").upper() or "N/A",
+        preference="disliked",
+        user_rating=None,
+        notes="Marked as not interested from recommendations.",
+    )
 
 
 def delete_saved_movie(username: str, tmdb_id: int) -> None:
@@ -853,6 +890,7 @@ def main() -> None:
         st.stop()
 
     genre_map, genre_options = load_genres()
+    genre_lookup = {int(value.split(",")[0]): name for name, value in genre_map.items() if value.split(",")[0].isdigit()}
     language_options = load_languages()
     language_codes = {label: code for label, code in language_options}
     addable_genres = [genre for genre in genre_options if genre != "Any"]
@@ -1037,10 +1075,28 @@ def main() -> None:
             st.markdown("### Recommendations")
             for index, movie in enumerate(recommendations, start=1):
                 year_value = movie.get("release_date", "")[:4] if movie.get("release_date") else "N/A"
-                label = f"{index}. {movie['title']} ({year_value})"
-                if st.button(label, key=f"movie_{movie['id']}", use_container_width=True):
-                    st.session_state.selected_movie_id = movie["id"]
-                    st.rerun()
+                st.markdown(f"**{index}. {movie['title']} ({year_value})**")
+                if user_profile:
+                    st.caption(recommendation_reason(movie, user_profile, genre_lookup))
+                open_col, dismiss_col = st.columns([3, 1.2])
+                with open_col:
+                    if st.button("Open Details", key=f"movie_{movie['id']}", use_container_width=True):
+                        st.session_state.selected_movie_id = movie["id"]
+                        st.rerun()
+                with dismiss_col:
+                    if st.button("Not Interested", key=f"not_interested_{movie['id']}", use_container_width=True):
+                        if active_user:
+                            movie_genres = [genre_lookup[genre_id] for genre_id in movie.get("genre_ids", []) if genre_id in genre_lookup]
+                            save_not_interested_movie(
+                                username=active_user,
+                                movie=movie,
+                                genres=movie_genres,
+                                streaming_services=[],
+                            )
+                            st.success(f"{movie['title']} was marked as not interested.")
+                            st.rerun()
+                        else:
+                            st.info("Log in first so the app can remember your dislikes.")
             st.markdown("</div>", unsafe_allow_html=True)
 
         if current_filters:
