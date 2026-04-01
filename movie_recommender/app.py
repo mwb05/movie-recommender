@@ -1310,6 +1310,7 @@ def main() -> None:
             with provider_columns[index % 2]:
                 if st.checkbox(provider_name, key=f"provider_{provider_name}"):
                     selected_providers.append(provider_map[provider_name])
+        st.markdown('<div class="section-label">Content Filters</div>', unsafe_allow_html=True)
         exclude_animation = st.checkbox("Exclude animated movies", value=False)
         year_filter_col, year_value_col = st.columns(2)
         with year_filter_col:
