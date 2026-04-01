@@ -9,6 +9,7 @@ from psycopg.rows import dict_row
 
 BASE_URL = "https://api.themoviedb.org/3"
 POSTER_BASE_URL = "https://image.tmdb.org/t/p/w500"
+ANIMATION_GENRE_ID = "16"
 
 
 def get_secret_value(name: str) -> str | None:
@@ -790,6 +791,7 @@ def build_discover_params(
     actor_value: str,
     certifications: list[str],
     providers: list[str],
+    exclude_animation: bool,
     year_mode: str,
     year_value: str,
     language_value: str,
@@ -848,6 +850,9 @@ def build_discover_params(
             params["watch_region"] = "US"
             params["with_watch_providers"] = "|".join(preferred_provider_ids[:2])
 
+    if exclude_animation:
+        params["without_genres"] = ANIMATION_GENRE_ID
+
     year_value = year_value.strip()
     if year_value:
         if not year_value.isdigit() or len(year_value) != 4:
@@ -883,6 +888,7 @@ def fetch_recommendation_page(
             filters["actor"],
             filters["certifications"],
             filters["providers"],
+            filters["exclude_animation"],
             filters["year_mode"],
             filters["year"],
             filters["language"],
@@ -1304,6 +1310,7 @@ def main() -> None:
             with provider_columns[index % 2]:
                 if st.checkbox(provider_name, key=f"provider_{provider_name}"):
                     selected_providers.append(provider_map[provider_name])
+        exclude_animation = st.checkbox("Exclude animated movies", value=False)
         year_filter_col, year_value_col = st.columns(2)
         with year_filter_col:
             year_mode = st.selectbox("Year Filter", ["Any", "Exactly", "Or Newer", "Or Older"], index=0)
@@ -1323,6 +1330,7 @@ def main() -> None:
             "actor": actor,
             "certifications": selected_certifications,
             "providers": selected_providers,
+            "exclude_animation": exclude_animation,
             "year_mode": year_mode,
             "year": year,
             "language": language_codes[language_label_value],
@@ -1386,6 +1394,7 @@ def main() -> None:
                 if provider_id in current_filters["providers"]
             ]
             st.write(f"Streaming Services: {', '.join(selected_provider_labels) if selected_provider_labels else 'Any'}")
+            st.write(f"Exclude Animation: {'Yes' if current_filters['exclude_animation'] else 'No'}")
             if current_filters["year"].strip():
                 st.write(f"Release Year: {current_filters['year_mode']} {current_filters['year'].strip()}")
             else:
