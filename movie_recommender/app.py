@@ -980,6 +980,32 @@ def load_page(
         st.session_state.selected_movie_id = None
 
 
+def handle_recommendation_request(
+    filters: dict,
+    genre_map: dict[str, str],
+    provider_map: dict[str, str],
+    profile: dict | None,
+) -> None:
+    reset_state_for_new_search()
+    st.session_state.filters = filters
+    st.session_state.current_view = "Recommendations"
+    load_page(filters, genre_map, provider_map, 1, profile)
+
+
+def handle_next_recommendation_batch(
+    genre_map: dict[str, str],
+    provider_map: dict[str, str],
+    profile: dict | None,
+) -> None:
+    current_filters = st.session_state.filters
+    if not current_filters:
+        return
+    next_page = st.session_state.current_page + 1
+    if next_page > max(st.session_state.total_pages, 1):
+        next_page = 1
+    load_page(current_filters, genre_map, provider_map, next_page, profile)
+
+
 def load_similar_movies(movie_id: int, movie_title: str, profile: dict | None = None) -> None:
     try:
         results = fetch_similar_movie_recommendations(movie_id, profile)
@@ -1323,8 +1349,6 @@ def main() -> None:
             )
 
         language_label_value = st.selectbox("Language", [label for label, _ in language_options], index=0)
-        submitted = st.button("Get Recommendations", type="primary", use_container_width=True)
-
         filters = {
             "genre": genre,
             "extra_genres": extra_genres,
@@ -1337,17 +1361,24 @@ def main() -> None:
             "language": language_codes[language_label_value],
         }
 
-        if submitted:
-            reset_state_for_new_search()
-            st.session_state.filters = filters
-            load_page(filters, genre_map, provider_map, 1, user_profile)
+        st.button(
+            "Get Recommendations",
+            type="primary",
+            use_container_width=True,
+            key="get_recommendations_button",
+            on_click=handle_recommendation_request,
+            args=(filters, genre_map, provider_map, user_profile),
+        )
 
         current_filters = st.session_state.filters
-        if current_filters and st.button("Get 5 Different", disabled=not st.session_state.recommendations, use_container_width=True):
-            next_page = st.session_state.current_page + 1
-            if next_page > max(st.session_state.total_pages, 1):
-                next_page = 1
-            load_page(current_filters, genre_map, provider_map, next_page, user_profile)
+        st.button(
+            "Get 5 Different",
+            disabled=not st.session_state.recommendations,
+            use_container_width=True,
+            key="get_5_different_button",
+            on_click=handle_next_recommendation_batch,
+            args=(genre_map, provider_map, user_profile),
+        )
 
         if recommendations and st.session_state.selected_movie_id is None:
             st.markdown('<div class="results-card">', unsafe_allow_html=True)
@@ -1364,9 +1395,13 @@ def main() -> None:
                         render_recommendation_tags(recommendation_tags(movie, user_profile, genre_lookup))
                     open_col, dismiss_col = st.columns([3, 1.2])
                     with open_col:
-                        if st.button("Open Details", key=f"movie_{movie['id']}", use_container_width=True):
-                            open_movie_details(movie["id"])
-                            st.rerun()
+                        st.button(
+                            "Open Details",
+                            key=f"movie_{movie['id']}",
+                            use_container_width=True,
+                            on_click=open_movie_details,
+                            args=(movie["id"],),
+                        )
                     with dismiss_col:
                         if st.button("Not Interested", key=f"not_interested_{movie['id']}", use_container_width=True):
                             if active_user:
@@ -1443,9 +1478,13 @@ def main() -> None:
                 with action_col:
                     st.markdown(f"**{index}. {movie['title']} ({year_value})**")
                     st.caption(overview[:180] + ("..." if len(overview) > 180 else ""))
-                    if st.button("Open Details", key=f"title_match_{movie['id']}", use_container_width=True):
-                        open_movie_details(movie["id"])
-                        st.rerun()
+                    st.button(
+                        "Open Details",
+                        key=f"title_match_{movie['id']}",
+                        use_container_width=True,
+                        on_click=open_movie_details,
+                        args=(movie["id"],),
+                    )
             st.markdown("</div>", unsafe_allow_html=True)
 
     elif page == "My Movies":
@@ -1473,9 +1512,13 @@ def main() -> None:
                                 Notes: {movie['notes'] or 'No notes yet'}
                                 """
                             )
-                            if st.button("Open Movie", key=f"saved_movie_{movie['tmdb_id']}", use_container_width=True):
-                                open_movie_details(movie["tmdb_id"])
-                                st.rerun()
+                            st.button(
+                                "Open Movie",
+                                key=f"saved_movie_{movie['tmdb_id']}",
+                                use_container_width=True,
+                                on_click=open_movie_details,
+                                args=(movie["tmdb_id"],),
+                            )
             else:
                 st.info("No saved movies yet for this username. Save a movie from Search or Recommendations to build your list.")
         else:
